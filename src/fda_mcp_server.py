@@ -1,39 +1,55 @@
-"""Read-only MCP server exposing openFDA drug recall data as tools."""
-import httpx
-from mcp.server.fastmcp import FastMCP
+"""Read-only MCP server exposing openFDA drug safety data as tools (stdio transport).
 
-mcp = FastMCP("openfda-drug-safety")
-BASE = "https://api.fda.gov/drug/enforcement.json"
+  python src/fda_mcp_server.py
+  npx @modelcontextprotocol/inspector python src/fda_mcp_server.py
+"""
+import sys
+from pathlib import Path
 
-def _query(search: str, limit: int) -> list[dict]:
-    r = httpx.get(BASE, params={"search": search, "limit": max(1, min(limit, 25))}, timeout=30)
-    if r.status_code == 404:  # openFDA returns 404 when there are no matches
-        return []
-    r.raise_for_status()
-    return [{
-        "recall_number": x.get("recall_number"),
-        "product": x.get("product_description", "")[:300],
-        "reason": x.get("reason_for_recall", "")[:300],
-        "classification": x.get("classification"),
-        "firm": x.get("recalling_firm"),
-        "date": x.get("recall_initiation_date"),
-        "status": x.get("status"),
-    } for x in r.json().get("results", [])]
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from mcp.server.mcpserver import MCPServer  # noqa: E402  (mcp>=2; was FastMCP in 1.x)
+
+import openfda  # noqa: E402
+
+mcp = MCPServer("openfda-drug-safety")
+
 
 @mcp.tool()
-def search_recalls_by_drug(drug_name: str, limit: int = 10) -> list[dict]:
-    """Find FDA drug recalls whose product description mentions the given drug name."""
-    return _query(f'product_description:"{drug_name}"', limit)
+def search_recalls_by_drug(drug_name: str, limit: int = 10) -> dict:
+    """Most recent FDA drug recalls (enforcement reports) whose product description mentions the drug name."""
+    return openfda.search_recalls_by_drug(drug_name, limit)
+
 
 @mcp.tool()
-def search_recalls_by_firm(firm_name: str, limit: int = 10) -> list[dict]:
-    """Find FDA drug recalls initiated by a given company."""
-    return _query(f'recalling_firm:"{firm_name}"', limit)
+def search_recalls_by_firm(firm_name: str, limit: int = 10) -> dict:
+    """Most recent FDA drug recalls initiated by a given company."""
+    return openfda.search_recalls_by_firm(firm_name, limit)
+
 
 @mcp.tool()
-def recent_class1_recalls(limit: int = 10) -> list[dict]:
-    """Most serious (Class I) drug recalls."""
-    return _query('classification:"Class I"', limit)
+def recent_class1_recalls(limit: int = 10) -> dict:
+    """Most recent Class I drug recalls (the most serious class: reasonable probability of serious harm)."""
+    return openfda.recent_class1_recalls(limit)
+
+
+@mcp.tool()
+def recall_counts_by_class(drug_name: str) -> dict:
+    """Number of recalls for a drug broken down by classification (Class I / II / III)."""
+    return openfda.recall_counts_by_class(drug_name)
+
+
+@mcp.tool()
+def top_adverse_reactions(drug_name: str, limit: int = 10) -> dict:
+    """Most frequently reported adverse reactions in FAERS for a drug (generic name). Counts, not causation."""
+    return openfda.top_adverse_reactions(drug_name, limit)
+
+
+@mcp.tool()
+def label_warnings(drug_name: str) -> dict:
+    """Boxed warning, warnings and contraindications from the FDA drug label (generic name)."""
+    return openfda.label_warnings(drug_name)
+
 
 if __name__ == "__main__":
     mcp.run()
